@@ -73,7 +73,7 @@ class GCProc(tb.Base):
             if self.count < self.min_iter and abs(mae_current - mae_prev) < self.tol:
                 pass
             else:
-
+                pass
 
 
 
