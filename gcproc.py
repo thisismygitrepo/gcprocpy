@@ -18,21 +18,19 @@ class GCProc(tb.Base):
         self.verbose = True
 
         # ============== Optimizer Specs ============================
-        self.min_iter = 2
         self.max_iter = 350
         self.count = 1  # iteration counter.
         self.score = []  # history of performance of mae.
-        self.score_lag = 2  # How many previous scores kept track of?
-        self.accept_score = 1  # How many scores used to calculate previous and current mean score
+        self.score_batch_size = 4
         self.recovered = None
-        self.tol = 1e-3
+        self.converg_thresh = 1e-3
 
         # ================== Configuration of Tasks and Inputs (Recover) ====================================
         self.task = ["regression"]  # ["classification","imputation"]
         self.method = ["matrix.projection"]  # per task (list of lists). knn another choice.
         self.design = None  # specifies what to predict (i.e. where are the missing values).
         # It should be list with same length as data list (passed to the gcproc)
-        self.join = tb.Struct(alpha=None, beta=None)  #
+        self.join = tb.Struct(alpha=[], beta=[])  #
         # alpha = [1, 1, None]  # use None to signify unique alpha or beta.
 
         # ================ Transfer pretrained latents (output to be) ===============================
@@ -48,6 +46,13 @@ class GCProc(tb.Base):
             self.code = pinv(alpha @ alpha.T) @ self.encode @ pinv(beta.T @ beta)
         return tb.Struct(x=x, alpha=alpha, beta=beta, idx=idx)
 
+    def check_convergenence(self) -> bool:
+        if self.count < self.score_batch_size:
+            return False  # too few iterations.
+        else:
+            mae_avg = np.mean(self.score[-self.score_batch_size:-1])
+            return mae_avg < self.converg_thresh
+
     def gcproc(self, data_list):
         np.random.seed(self.seed)
         data = [self.init_single_dataset(data, idx=idx) for idx, data in enumerate(data_list)]
@@ -55,39 +60,37 @@ class GCProc(tb.Base):
             self.count += 1
             for idx, d in enumerate(data):
                 self.update_set(d)
-
-                # ====================== Joining ===============================
-                indices = np.argwhere(self.join.alpha == self.join.alpha[idx])
-                for tmp in data[indices]:
-                    tmp.alpha = d.alpha
-                indices = np.argwhere(self.join.beta == self.join.beta[idx])
-                for tmp in data[indices]:
-                    tmp.beta = d.beta
+                self.join_params(data, idx, d)
 
             mae = np.mean(abs(self.prev_encode - self.encode))
             self.score.append(mae)
+            if self.check_convergenence():
+                break
+            if self.verbose:
+                print(f"Iternation #{self.count}")
 
-            mae_current = np.mean(self.score[-self.score_lag:])
-            mae_prev = np.mean(self.score[-self.score_lag - 1:-1])  # TODO: generalize this.
-
-            if self.count < self.min_iter and abs(mae_current - mae_prev) < self.tol:
-                pass
-            else:
-                pass
-
-
+    def join_params(self, data, idx, d):
+        # ====================== Joining ===============================
+        if self.join.alpha:
+            indices = np.argwhere(self.join.alpha == self.join.alpha[idx])
+            for tmp in data[indices]:
+                tmp.alpha = d.alpha
+        if self.join.beta:
+            indices = np.argwhere(self.join.beta == self.join.beta[idx])
+            for tmp in data[indices]:
+                tmp.beta = d.beta
 
     def update_set(self, d):
         beta_dot = d.beta @ pinv(d.beta.T @ d.beta)
         code_dot_beta = self.code.T @ pinv(self.code @ self.code.T)
-        d.alpha = d.x @ beta_dot @ code_dot_beta
+        d.alpha = (d.x @ beta_dot @ code_dot_beta).T
 
         alpha_dot = pinv(d.alpha @ d.alpha.T) @ d.alpha
         code_dot_alpha = pinv(self.code.T @ self.code) @ self.code.T
-        d.beta = code_dot_alpha @ alpha_dot @ d.x
+        d.beta = (code_dot_alpha @ alpha_dot @ d.x).T
 
         self.prev_encode, self.encode = self.encode, d.alpha @ d.x @ d.beta
-        self.code = pinv(d.alpha @ d.alpha.T) @ self.encode @ pinv(d.beta @ d.beta.T)
+        self.code = pinv(d.alpha @ d.alpha.T) @ self.encode @ pinv(d.beta.T @ d.beta)
         return d
 
     def prepare(self, x):
