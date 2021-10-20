@@ -6,45 +6,44 @@ from numpy.linalg import pinv
 
 
 class GCProc(tb.Base):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, i_dim=30, j_dim=10, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # ====================== Model Configuration ====================================
-        self.i_dim = 30
-        self.j_dim = 30
-        self.param_init = ParamInit.random_normal  # any method from this class is okay.
-        # ============== Numerical Specs
+        self.i_dim = i_dim  # size of the latent space.
+        self.j_dim = j_dim  # size of the latent space.
+        self.param_init = ParamInit.random_normal  # initializes alpha and beta.
+
+        # ===================== Numerical Specs =========================================
         self.norm = tb.Struct(log=False, center=False, scale=False, bias=1)
         self.seed = 1  # for reproducibility of random initializations.
         self.verbose = True
 
-        # ============== Optimizer Specs ============================
+        # ============== Optimizer Specs ================================================
         self.max_iter = 350
         self.count = 1  # iteration counter.
-        self.score = []  # history of performance of mae.
+        self.score = []  # history of performance of mae, used by stopping criterion.
         self.score_batch_size = 4
-        self.recovered = None
         self.converg_thresh = 1e-3
 
         # ================== Configuration of Tasks and Inputs (Recover) ====================================
-        self.task = ["regression"]  # ["classification","imputation"]
+        self.task = ["regression", "classification", "imputation"][0]
         self.method = ["matrix.projection"]  # per task (list of lists). knn another choice.
         self.design = None  # specifies what to predict (i.e. where are the missing values).
         # It should be list with same length as data list (passed to the gcproc)
-        self.join = tb.Struct(alpha=[], beta=[])  #
+        self.join = tb.Struct(alpha=[], beta=[])  # which alphas and betas are common among datasets.
         # alpha = [1, 1, None]  # use None to signify unique alpha or beta.
 
         # ================ Transfer pretrained latents (output to be) ===============================
-        self.encode = None  # common for all datasets.
-        self.prev_encode = None  # for convergence test.
-        self.code = None  # common for all datasets.
+        self.data = None  # list of datasets passed.
+        self.code = None  # common for all datasets. alpha_x Ex beta_x == alpha_y Y beta_y = z
+        self.prev_code = None  # for convergence test.
 
     def init_single_dataset(self, x, update_encode_code=False, idx=None):
         x = self.prepare(x)
         alpha, beta = self.param_init(self, x)
-        if update_encode_code or self.encode is None:
-            self.encode = alpha @ x @ beta
-            self.code = pinv(alpha @ alpha.T) @ self.encode @ pinv(beta.T @ beta)
-        return tb.Struct(x=x, alpha=alpha, beta=beta, idx=idx)
+        if update_encode_code or self.code is None:
+            self.code = alpha @ x @ beta
+        return tb.Struct(x=x, alpha=alpha, beta=beta, recovered=pinv(alpha) @ self.code @ pinv(beta), idx=idx)
 
     def check_convergenence(self) -> bool:
         if self.count < self.score_batch_size:
@@ -55,19 +54,21 @@ class GCProc(tb.Base):
 
     def gcproc(self, data_list):
         np.random.seed(self.seed)
-        data = [self.init_single_dataset(data, idx=idx) for idx, data in enumerate(data_list)]
+        self.data = [self.init_single_dataset(data, idx=idx) for idx, data in enumerate(data_list)]
+        data = self.data
         while True:
             self.count += 1
             for idx, d in enumerate(data):
                 self.update_set(d)
                 self.join_params(data, idx, d)
 
-            mae = np.mean(abs(self.prev_encode - self.encode))
+            mae = np.mean(abs(self.prev_code - self.code))
             self.score.append(mae)
             if self.check_convergenence():
                 break
             if self.verbose:
-                print(f"Iternation #{self.count}")
+                d = data[0]
+                print(f"Iteration #{self.count:3}. Loss = {np.square(d.x - d.recovered).sum():12.0f}")
 
     def join_params(self, data, idx, d):
         # ====================== Joining ===============================
@@ -81,17 +82,14 @@ class GCProc(tb.Base):
                 tmp.beta = d.beta
 
     def update_set(self, d):
-        beta_dot = d.beta @ pinv(d.beta.T @ d.beta)
-        code_dot_beta = self.code.T @ pinv(self.code @ self.code.T)
-        d.alpha = (d.x @ beta_dot @ code_dot_beta).T
-
-        alpha_dot = pinv(d.alpha @ d.alpha.T) @ d.alpha
-        code_dot_alpha = pinv(self.code.T @ self.code) @ self.code.T
-        d.beta = (code_dot_alpha @ alpha_dot @ d.x).T
-
-        self.prev_encode, self.encode = self.encode, d.alpha @ d.x @ d.beta
-        self.code = pinv(d.alpha @ d.alpha.T) @ self.encode @ pinv(d.beta.T @ d.beta)
+        d.alpha = (d.x @ d.beta @ pinv(self.code)).T  # update alpha using backward model (cheap)
+        d.beta = (pinv(self.code) @ d.alpha @ d.x).T  # update beta using backward model (cheap)
+        self.prev_code, self.code = self.code, d.alpha @ d.x @ d.beta  # update z using forward model.
+        d.recovered = self.recover(d)
         return d
+
+    def recover(self, d):  # reconstruct from a, b & z.
+        return pinv(d.alpha) @ self.code @ pinv(d.beta)
 
     def prepare(self, x):
         """ Based on this function: https://github.com/AskExplain/gcproc/blob/main/R/prepare_data.R
