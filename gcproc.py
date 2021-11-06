@@ -1,8 +1,10 @@
 
+import matplotlib.pyplot as plt
+
 from utils.parameter_intialization import ParamInit
 import numpy as np
 import crocodile.toolbox as tb
-from numpy.linalg import pinv
+from numpy.linalg import pinv, inv
 
 
 class GCProc(tb.Base):
@@ -35,26 +37,38 @@ class GCProc(tb.Base):
 
         # ================ Transfer pretrained latents (output to be) ===============================
         self.data = None  # list of datasets passed.
-        self.code = None  # common for all datasets. alpha_x Ex beta_x == alpha_y Y beta_y = z
-        self.prev_code = None  # for convergence test.
+        self.encode = None  # common for all datasets. alpha_x Ex beta_x == alpha_y Y beta_y = ENCODE (1)
+        self.code = None  # alpha_d (x) beta_d
+        self.prev_encode = None  # for convergence test.
 
     def init_single_dataset(self, x, update_encode_code=False, idx=None):
         x = self.prepare(x)
         alpha, beta = self.param_init(self, x)
-        if update_encode_code or self.code is None:
-            self.code = alpha @ x @ beta
-        return tb.Struct(x=x, alpha=alpha, beta=beta, recovered=pinv(alpha) @ self.code @ pinv(beta), idx=idx)
+        if update_encode_code or self.encode is None:
+            self.encode = alpha @ x @ beta  # pinv(alpha) @ self.encode @ pinv(beta)
+        return tb.Struct(x=x, alpha=alpha, beta=beta, recovered=None, idx=idx)
+
+    def init_code_encode(self):
+        assert self.data is not None, f"Initialize the parameters first!"
+        d = self.data[-1]  # any dataset is good enough.
+        self.encode = d.alpha @ d.x @ d.beta
+        self.code = inv(d.alpha @ d.alpha.T) @ self.encode @ inv(d.beta.T @ d.beta)
 
     def check_convergenence(self) -> bool:
         if self.count < self.score_batch_size:
             return False  # too few iterations.
         else:
-            mae_avg = np.mean(self.score[-self.score_batch_size:-1])
-            return mae_avg < self.converg_thresh
+            mae_avg = np.mean(self.score[-self.score_batch_size:])
+            if self.count < self.max_iter:
+                return mae_avg < self.converg_thresh
+            else:
+                print(f"Failed to converge before max iteration {self.max_iter}. Latest loss = {mae_avg}")
+                return True
 
-    def gcproc(self, data_list):
+    def fit(self, data_list):
         np.random.seed(self.seed)
         self.data = [self.init_single_dataset(data, idx=idx) for idx, data in enumerate(data_list)]
+        self.init_code_encode()
         data = self.data
         while True:
             self.count += 1
@@ -62,13 +76,28 @@ class GCProc(tb.Base):
                 self.update_set(d)
                 self.join_params(data, idx, d)
 
-            mae = np.mean(abs(self.prev_code - self.code))
+            mae = np.mean(abs(self.prev_encode - self.encode))
             self.score.append(mae)
             if self.check_convergenence():
                 break
             if self.verbose:
-                d = data[0]
-                print(f"Iteration #{self.count:3}. Loss = {np.square(d.x - d.recovered).sum():12.0f}")
+                # d = data[0]
+                # print(f"Iteration #{self.count:3}. Loss = {np.abs(d.x - self.recover(d)).sum():1.0f}")
+                fig, ax = plt.subplots()
+                ax.plot(self.score)
+                ax.set_title(f"GCProc Convergence")
+                ax.set_xlabel(f"Iteration")
+                ax.set_ylabel(f"Encode Mean Absolute Error")
+
+    def fit_transform(self, data_list):
+        """Runs the solver `fit` and then transform each of the datasets provided."""
+        self.fit(data_list)
+        for dat in self.data:
+            self.encode(dat)
+
+    @staticmethod
+    def encode(dat):
+        return dat.alpha @ dat.x @ dat.beta
 
     def join_params(self, data, idx, d):
         # ====================== Joining ===============================
@@ -82,14 +111,16 @@ class GCProc(tb.Base):
                 tmp.beta = d.beta
 
     def update_set(self, d):
-        d.alpha = (d.x @ d.beta @ pinv(self.code)).T  # update alpha using backward model (cheap)
-        d.beta = (pinv(self.code) @ d.alpha @ d.x).T  # update beta using backward model (cheap)
-        self.prev_code, self.code = self.code, d.alpha @ d.x @ d.beta  # update z using forward model.
-        d.recovered = self.recover(d)
+        tmp = (self.code @ d.beta.T)
+        d.alpha = (d.x @ pinv(tmp)).T  # update alpha using backward model (cheap)
+        tmp = (d.alpha.T @ self.code)
+        d.beta = (pinv(tmp) @ d.x).T  # update beta using backward model (cheap)
+        self.prev_encode, self.encode = self.encode, d.alpha @ d.x @ d.beta  # update encode using forward model.
+        # d.recovered = self.recover(d)  # Optional.
         return d
 
     def recover(self, d):  # reconstruct from a, b & z.
-        return pinv(d.alpha) @ self.code @ pinv(d.beta)
+        return d.alpha.T @ self.encode @ d.beta.T
 
     def prepare(self, x):
         """ Based on this function: https://github.com/AskExplain/gcproc/blob/main/R/prepare_data.R
