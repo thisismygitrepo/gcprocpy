@@ -5,10 +5,11 @@ from utils.parameter_intialization import ParamInit
 import numpy as np
 import crocodile.toolbox as tb
 from numpy.linalg import pinv, inv
+from sklearn.preprocessing import StandardScaler
 
 
 class GCProc(tb.Base):
-    def __init__(self, i_dim=30, j_dim=10, *args, **kwargs):
+    def __init__(self, i_dim=30, j_dim=10, verbose=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # ====================== Model Configuration ====================================
         self.i_dim = i_dim  # size of the latent space.
@@ -18,7 +19,7 @@ class GCProc(tb.Base):
         # ===================== Numerical Specs =========================================
         self.norm = tb.Struct(log=False, center=False, scale=False, bias=1)
         self.seed = 1  # for reproducibility of random initializations.
-        self.verbose = True
+        self.verbose = verbose
 
         # ============== Optimizer Specs ================================================
         self.max_iter = 350
@@ -80,14 +81,14 @@ class GCProc(tb.Base):
             self.score.append(mae)
             if self.check_convergenence():
                 break
-            if self.verbose:
-                # d = data[0]
-                # print(f"Iteration #{self.count:3}. Loss = {np.abs(d.x - self.recover(d)).sum():1.0f}")
-                fig, ax = plt.subplots()
-                ax.plot(self.score)
-                ax.set_title(f"GCProc Convergence")
-                ax.set_xlabel(f"Iteration")
-                ax.set_ylabel(f"Encode Mean Absolute Error")
+        if self.verbose:
+            # d = data[0]
+            # print(f"Iteration #{self.count:3}. Loss = {np.abs(d.x - self.recover(d)).sum():1.0f}")
+            fig, ax = plt.subplots()
+            ax.plot(self.score)
+            ax.set_title(f"GCProc Convergence")
+            ax.set_xlabel(f"Iteration")
+            ax.set_ylabel(f"Encode Mean Absolute Error")
 
     def fit_transform(self, data_list):
         """Runs the solver `fit` and then transform each of the datasets provided."""
@@ -119,8 +120,27 @@ class GCProc(tb.Base):
         # d.recovered = self.recover(d)  # Optional.
         return d
 
-    def recover(self, d):  # reconstruct from a, b & z.
-        return d.alpha.T @ self.encode @ d.beta.T
+    def recover(self, predict_idx, subs_func=None, mode=["external", "internal"][0]):  # reconstruct x from a, b & z.
+        y = self.data[predict_idx]  # to predict (update).
+
+        tmp = 0
+        for idx in range(len(self.data)):
+            if idx != predict_idx:
+                d = self.data[idx]
+                tmp += y.alpha.T @ self.code @ d.beta.T @ d.beta
+
+        tmp /= (len(self.data) - 1)  # averaging.
+        tmp = StandardScaler().fit_transform(tmp)
+        tmp = np.column_stack([np.ones(tmp.shape[0]), tmp])
+
+        if mode == "internal":  # ==> subset
+            y_x = subs_func(y.x)
+            tmp = subs_func(tmp)
+        else:
+            y_x = y.x
+        k = pinv(tmp) @ y_x  # bootstrapping.
+        y_hat = tmp @ k
+        return y_hat
 
     def prepare(self, x):
         """ Based on this function: https://github.com/AskExplain/gcproc/blob/main/R/prepare_data.R
