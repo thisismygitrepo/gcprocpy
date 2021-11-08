@@ -107,12 +107,12 @@ class GCProc(tb.Base):
                 tmp.beta = d.beta
 
     def update_set(self, d):
-        self.prev_encode, self.encode = self.encode, self.get_encode(d)  # update encode using forward model.
         self.code = self.get_code(d)
         tmp = (self.code @ d.beta.T)
         d.alpha = (d.x @ pinv(tmp)).T  # using eq 2.
         tmp = (d.alpha.T @ self.code)
         d.beta = (pinv(tmp) @ d.x).T  # using eq 2.
+        self.prev_encode, self.encode = self.encode, self.get_encode(d)  # update encode using forward model.
 
         return d
 
