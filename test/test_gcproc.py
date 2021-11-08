@@ -33,21 +33,20 @@ s.fit([X, Y])
 
 
 # ================= Test Prediction =============================
-def subs_func(array):
-    return array[-100:]
 
+def test_prediction():
 
-for i in range(10):
-    y_hat = s.recover(predict_idx=1, subs_func=subs_func, mode="internal")
-    mse = mean_squared_error(y_hat, ground_truth)
-    print(f"{mse=}")
-    Y[-100:, ...] = y_hat
-    s.fit([X, Y])
+    def subs_func(array):
+        return array[-100:]
 
-    y_hat = s.recover(predict_idx=1, mode="external")
-    mse = mean_squared_error(y_hat[-100:], ground_truth)
-    print(f"{mse=}")
-    s.fit([X, y_hat])
+    for i in range(10):
+        y_hat = s.recover(predict_idx=1, subs_func=subs_func, mode="internal")
+        mse = mean_squared_error(y_hat, ground_truth)
+        print(f"{mse=}")
+        Y[-100:, ...] = y_hat
+        s.fit([X, Y])
 
-
-
+        y_hat = s.recover(predict_idx=1, mode="external")
+        mse = mean_squared_error(y_hat[-100:], ground_truth)
+        print(f"{mse=}")
+        s.fit([X, y_hat])

@@ -42,18 +42,16 @@ class GCProc(tb.Base):
         self.code = None  # alpha_d (x) beta_d
         self.prev_encode = None  # for convergence test.
 
-    def init_single_dataset(self, x, update_encode_code=False, idx=None):
+    def init_single_dataset(self, x, idx=None):
         x = self.prepare(x)
         alpha, beta = self.param_init(self, x)
-        if update_encode_code or self.encode is None:
-            self.encode = alpha @ x @ beta  # pinv(alpha) @ self.encode @ pinv(beta)
         return tb.Struct(x=x, alpha=alpha, beta=beta, recovered=None, idx=idx)
 
     def init_code_encode(self):
         assert self.data is not None, f"Initialize the parameters first!"
         d = self.data[-1]  # any dataset is good enough.
-        self.encode = d.alpha @ d.x @ d.beta
-        self.code = inv(d.alpha @ d.alpha.T) @ self.encode @ inv(d.beta.T @ d.beta)
+        self.encode = self.get_encode(d)
+        self.code = self.get_code(d)
 
     def check_convergenence(self) -> bool:
         if self.count < self.score_batch_size:
@@ -82,10 +80,11 @@ class GCProc(tb.Base):
             if self.check_convergenence():
                 break
         if self.verbose:
-            # d = data[0]
+            # d = data[0]  # one can optionally compute the recovered X for convergenence purpose.
+            # d.recovered = self.recover(d)  # Optional.
             # print(f"Iteration #{self.count:3}. Loss = {np.abs(d.x - self.recover(d)).sum():1.0f}")
             fig, ax = plt.subplots()
-            ax.plot(self.score)
+            ax.semilogy(self.score)
             ax.set_title(f"GCProc Convergence")
             ax.set_xlabel(f"Iteration")
             ax.set_ylabel(f"Encode Mean Absolute Error")
@@ -95,10 +94,6 @@ class GCProc(tb.Base):
         self.fit(data_list)
         for dat in self.data:
             self.encode(dat)
-
-    @staticmethod
-    def encode(dat):
-        return dat.alpha @ dat.x @ dat.beta
 
     def join_params(self, data, idx, d):
         # ====================== Joining ===============================
@@ -112,17 +107,24 @@ class GCProc(tb.Base):
                 tmp.beta = d.beta
 
     def update_set(self, d):
+        self.prev_encode, self.encode = self.encode, self.get_encode(d)  # update encode using forward model.
+        self.code = self.get_code(d)
         tmp = (self.code @ d.beta.T)
-        d.alpha = (d.x @ pinv(tmp)).T  # update alpha using backward model (cheap)
+        d.alpha = (d.x @ pinv(tmp)).T  # using eq 2.
         tmp = (d.alpha.T @ self.code)
-        d.beta = (pinv(tmp) @ d.x).T  # update beta using backward model (cheap)
-        self.prev_encode, self.encode = self.encode, d.alpha @ d.x @ d.beta  # update encode using forward model.
-        # d.recovered = self.recover(d)  # Optional.
+        d.beta = (pinv(tmp) @ d.x).T  # using eq 2.
+
         return d
+
+    @staticmethod
+    def get_encode(d):  # use eq. 1
+        return d.alpha @ d.x @ d.beta
+
+    def get_code(self, d):  # eq. (2) -> eq. (1) and solve for z:
+        return inv(d.alpha @ d.alpha.T) @ self.encode @ inv(d.beta.T @ d.beta)
 
     def recover(self, predict_idx, subs_func=None, mode=["external", "internal"][0]):  # reconstruct x from a, b & z.
         y = self.data[predict_idx]  # to predict (update).
-
         tmp = 0
         for idx in range(len(self.data)):
             if idx != predict_idx:
