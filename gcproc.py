@@ -9,7 +9,7 @@ from sklearn.preprocessing import StandardScaler
 
 
 class GCProc(tb.Base):
-    def __init__(self, i_dim=30, j_dim=10, verbose=True, *args, **kwargs):
+    def __init__(self, i_dim=30, j_dim=10, max_iter=350, verbose=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # ====================== Model Configuration ====================================
         self.i_dim = i_dim  # size of the latent space.
@@ -22,7 +22,7 @@ class GCProc(tb.Base):
         self.verbose = verbose
 
         # ============== Optimizer Specs ================================================
-        self.max_iter = 350
+        self.max_iter = max_iter
         self.count = 1  # iteration counter.
         self.score = []  # history of performance of mae, used by stopping criterion.
         self.score_batch_size = 4
@@ -42,16 +42,25 @@ class GCProc(tb.Base):
         self.code = None  # alpha_d (x) beta_d
         self.prev_encode = None  # for convergence test.
 
+    def save(self, name, save_alpha_beta=False):
+        dat = tb.Struct(code=self.code, encode=self.encode)
+        if save_alpha_beta:
+            # dat.update(alpha=self.alpha, beta=self.beta)
+            pass
+        dat.save_npy(path=tb.P.home().joinpath(f"GCProcData/{name}"))
+
     def init_single_dataset(self, x, idx=None):
         x = self.prepare(x)
         alpha, beta = self.param_init(self, x)
         return tb.Struct(x=x, alpha=alpha, beta=beta, recovered=None, idx=idx)
 
-    def init_code_encode(self):
+    def init_code_encode(self, code=None, encode=None):
         assert self.data is not None, f"Initialize the parameters first!"
         d = self.data[-1]  # any dataset is good enough.
-        self.encode = self.get_encode(d)
-        self.code = self.get_code(d)
+        if encode is None:  # init from random values.
+            self.encode = self.get_encode(d)
+        if code is None:
+            self.code = self.get_code(d)
 
     def check_convergenence(self) -> bool:
         if self.count < self.score_batch_size:
@@ -62,12 +71,12 @@ class GCProc(tb.Base):
                 return mae_avg < self.converg_thresh
             else:
                 print(f"Failed to converge before max iteration {self.max_iter}. Latest loss = {mae_avg}")
-                return True
+                return True  # as if convergence check returns True (break!)
 
-    def fit(self, data_list):
+    def fit(self, data_list, code=None, encode=None):
         np.random.seed(self.seed)
         self.data = [self.init_single_dataset(data, idx=idx) for idx, data in enumerate(data_list)]
-        self.init_code_encode()
+        self.init_code_encode(code=code, encode=encode)
         data = self.data
         while True:
             self.count += 1
@@ -107,12 +116,12 @@ class GCProc(tb.Base):
                 tmp.beta = d.beta
 
     def update_set(self, d):
+        self.prev_encode, self.encode = self.encode, self.get_encode(d)  # update encode using forward model.
         self.code = self.get_code(d)
         tmp = (self.code @ d.beta.T)
         d.alpha = (d.x @ pinv(tmp)).T  # using eq 2.
         tmp = (d.alpha.T @ self.code)
         d.beta = (pinv(tmp) @ d.x).T  # using eq 2.
-        self.prev_encode, self.encode = self.encode, self.get_encode(d)  # update encode using forward model.
 
         return d
 
