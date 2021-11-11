@@ -59,8 +59,12 @@ class GCProc(tb.Base):
         d = self.data[-1]  # any dataset is good enough.
         if encode is None:  # init from random values.
             self.encode = self.get_encode(d)
+        else:
+            self.encode = encode
         if code is None:
             self.code = self.get_code(d)
+        else:
+            self.code = code
 
     def check_convergenence(self) -> bool:
         if self.count < self.score_batch_size:
