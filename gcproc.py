@@ -77,9 +77,25 @@ class GCProc(tb.Base):
                 print(f"Failed to converge before max iteration {self.max_iter}. Latest loss = {mae_avg}")
                 return True  # as if convergence check returns True (break!)
 
-    def fit(self, data_list, code=None, encode=None):
+    def fit(self, data_list, code=None, encode=None, keep_params=False):
+        """
+        :param data_list:
+        :param code:
+        :param encode:
+        :param keep_params:
+        :return:
+        """
         np.random.seed(self.seed)
-        self.data = [self.init_single_dataset(data, idx=idx) for idx, data in enumerate(data_list)]
+        if keep_params is False:
+            self.data = [self.init_single_dataset(data, idx=idx) for idx, data in enumerate(data_list)]
+        else:
+            tmp_data = []
+            for idx, data in enumerate(data_list):
+                dat = tb.Struct(x=data, alpha=self.data[idx].alpha, beta=self.data[idx].beta,
+                                recovered=None, idx=idx)
+                tmp_data.append(dat)
+            self.data = tmp_data
+
         self.init_code_encode(code=code, encode=encode)
         data = self.data
         while True:
@@ -92,15 +108,19 @@ class GCProc(tb.Base):
             self.score.append(mae)
             if self.check_convergenence():
                 break
+
         if self.verbose:
             # d = data[0]  # one can optionally compute the recovered X for convergenence purpose.
             # d.recovered = self.recover(d)  # Optional.
             # print(f"Iteration #{self.count:3}. Loss = {np.abs(d.x - self.recover(d)).sum():1.0f}")
-            fig, ax = plt.subplots()
-            ax.semilogy(self.score)
-            ax.set_title(f"GCProc Convergence")
-            ax.set_xlabel(f"Iteration")
-            ax.set_ylabel(f"Encode Mean Absolute Error")
+            self.plot_progress()
+
+    def plot_progress(self):
+        fig, ax = plt.subplots()
+        ax.semilogy(self.score)
+        ax.set_title(f"GCProc Convergence")
+        ax.set_xlabel(f"Iteration")
+        ax.set_ylabel(f"Encode Mean Absolute Error")
 
     def fit_transform(self, data_list):
         """Runs the solver `fit` and then transform each of the datasets provided."""
@@ -137,24 +157,32 @@ class GCProc(tb.Base):
         return inv(d.alpha @ d.alpha.T) @ self.encode @ inv(d.beta.T @ d.beta)
 
     def recover(self, predict_idx, subs_func=None, mode=["external", "internal"][0]):  # reconstruct x from a, b & z.
+        """
+
+        :param predict_idx:
+        :param subs_func:
+        :param mode:
+        :return:
+        """
         y = self.data[predict_idx]  # to predict (update).
-        tmp = 0
+        covariates = np.zeros(shape=(y.x.shape[0], y.beta.shape[1]))
         for idx in range(len(self.data)):
             if idx != predict_idx:
                 d = self.data[idx]
-                tmp += y.alpha.T @ self.code @ d.beta.T @ d.beta
+                tmp = y.alpha.T @ self.code @ d.beta.T @ d.beta
+                covariates += StandardScaler().fit_transform(tmp) / len(self.data)
 
-        tmp /= (len(self.data) - 1)  # averaging.
-        tmp = StandardScaler().fit_transform(tmp)
-        tmp = np.column_stack([np.ones(tmp.shape[0]), tmp])
+        covariates = np.column_stack([np.ones(covariates.shape[0]), covariates])
 
         if mode == "internal":  # ==> subset
             y_x = subs_func(y.x)
-            tmp = subs_func(tmp)
+            tmp = subs_func(covariates)
         else:
             y_x = y.x
+            tmp = covariates
+
         k = pinv(tmp) @ y_x  # bootstrapping.
-        y_hat = tmp @ k
+        y_hat = covariates @ k
         return y_hat
 
     def prepare(self, x):

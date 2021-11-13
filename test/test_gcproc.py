@@ -20,6 +20,7 @@ if __name__ == '__main__':
     adata_gex = ad.read_h5ad(root.joinpath("cite/cite_gex_processed_training.h5ad"))
     adata_adt = ad.read_h5ad(root.joinpath("cite/cite_adt_processed_training.h5ad"))
 
+    # Generating the scene to test prediction performance.
     X = adata_gex.X[:6000, :100].toarray()
     Y = adata_adt.X[:6000, :].toarray()
 
@@ -28,27 +29,28 @@ if __name__ == '__main__':
     knn = KNeighborsRegressor(n_neighbors=5)
     knn.fit(X[:-100], Y[:-100])
     Y[-100:, ...] = knn.predict(X[-100:])
+    # =================================================
 
-    s = GCProc(verbose=False)
-    s.fit([X, Y])
-
+    gcproc = GCProc(verbose=False, max_iter=1)
+    gcproc.fit([X, Y])
+    gcproc.max_iter = 1
 
     # ================= Test Prediction =============================
 
     def test_prediction():
 
         def subs_func(array):
-            return array[-100:]
+            return array[:-100]
 
         for i in range(10):
-            y_hat = s.recover(predict_idx=1, subs_func=subs_func, mode="internal")
-            mse = mean_squared_error(y_hat, ground_truth)
+            y_hat = gcproc.recover(predict_idx=1, subs_func=subs_func, mode="internal")
+            y_hat_test = y_hat[-100:]
+            mse = mean_squared_error(y_hat_test, ground_truth)
             print(f"{mse=}")
-            Y[-100:, ...] = y_hat
-            s.fit([X, Y])
+            gcproc.fit([X, y_hat], code=gcproc.code, encode=gcproc.encode, keep_params=True)
 
-            y_hat = s.recover(predict_idx=1, mode="external")
+            y_hat = gcproc.recover(predict_idx=1, mode="external")
             mse = mean_squared_error(y_hat[-100:], ground_truth)
             print(f"{mse=}")
-            s.fit([X, y_hat])
+            gcproc.fit([X, y_hat], code=gcproc.code, encode=gcproc.encode, keep_params=True)
 
