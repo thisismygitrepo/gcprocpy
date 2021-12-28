@@ -3,8 +3,7 @@ import anndata as ad
 import crocodile.toolbox as tb
 import numpy as np
 
-from gcproc import GCProc
-import matplotlib.pyplot as plt
+from src.gcproc.gcproc import GCProc
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.metrics import mean_squared_error
 

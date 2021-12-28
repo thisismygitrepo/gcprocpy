@@ -1,0 +1,28 @@
+Metadata-Version: 2.1
+Name: GCProc
+Version: 0.1.0
+Summary: Python Implementation of the R-based GCProc
+Home-page: https://github.com/thisismygitrepo/gcprocpy
+Author: ['Alex Al-Saffar', 'David Banh']
+Author-email: programmer@usa.com
+License: MIT
+Platform: UNKNOWN
+Requires-Python: >=3.6
+License-File: LICENSE
+
+
+# GCPROCPY
+
+This is a Python implementation based on `https://github.com/AskExplain/gcproc/blob/1_prepare`
+
+
+To be done:
+* Using a zero-shot NN to provide good intialization.
+* Extend the technique to multi-linear agebra. This is of interest in biological structures data where there is metadata that can be used.
+* generalized assigment problem.
+* Impuation learning
+* Kernelized version.
+
+
+
+

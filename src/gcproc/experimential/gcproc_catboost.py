@@ -1,8 +1,4 @@
-
-import numpy as np
-import matplotlib.pyplot as plt
-import crocodile.toolbox as tb
-from gcproc import GCProc
+from src.gcproc.gcproc import GCProc
 
 """
 * GCProc (randomly initialized) comes first to consume the data and do `dimensionality reduction`.

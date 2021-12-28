@@ -1,8 +1,5 @@
 
-from gcproc import GCProc
-import numpy as np
-import matplotlib.pyplot as plt
-import crocodile.toolbox as tb
+from src.gcproc.gcproc import GCProc
 
 """
 

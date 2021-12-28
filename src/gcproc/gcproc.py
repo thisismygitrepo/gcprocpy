@@ -1,6 +1,5 @@
 
 import matplotlib.pyplot as plt
-
 from utils.parameter_intialization import ParamInit
 import numpy as np
 import crocodile.toolbox as tb
